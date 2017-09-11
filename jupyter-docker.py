@@ -34,6 +34,24 @@ class Util:
 		for key in replacements:
 			patched = patched.replace(key, replacements[key])
 		Util.writeFile(filename, patched)
+	
+	# Retrieves the host port bound to the specified container port,
+	# and opens it in the user's default web browser
+	@staticmethod
+	def discoverPortAndOpen(containerName, port):
+		
+		# Use `docker port` to determine which host port was bound to the container port
+		result = subprocess.run(
+			[DOCKER_COMMAND, 'port', containerName, str(port)],
+			stdout=subprocess.PIPE,
+			stderr=subprocess.PIPE,
+			universal_newlines=True
+		)
+		hostAddress = result.stdout.strip()
+		
+		# Launch the user's web browser to display the service running on the port
+		openCommand = 'xdg-open' if IS_LINUX else 'open'
+		subprocess.Popen([openCommand, 'http://' + hostAddress])
 
 # The template code for our Dockerfile
 DOCKERFILE_TEMPLATE = '''FROM __UPSTREAM_IMAGE__
@@ -92,6 +110,9 @@ rm -rf /var/lib/apt/lists/*
 # Apply our Jupyter config file
 COPY jupyter_notebook_config.py /root/.jupyter/
 
+# Create a log directory for TensorBoard
+RUN mkdir /tensorboard-log
+
 WORKDIR /workingdir
 EXPOSE 8888
 '''
@@ -119,7 +140,17 @@ DSCRIPT_ARGS   = ['---nvidia-docker'] if USE_GPU else []
 DOCKER_COMMAND = 'nvidia-docker' if USE_GPU else 'docker'
 
 # If no explicit command is specified, default to 'run'
-command = sys.argv[1] if len(sys.argv) > 1 else 'run'
+DEFAULT_COMMAND = 'run'
+command = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_COMMAND
+
+# If the user specified the TensorBoard argument, accept it with or without 'run'
+startTensorboard = False
+tbArgs = ['t', 'tb', 'tboard', 'tensorboard']
+if command.strip('-') in tbArgs:
+	command = DEFAULT_COMMAND
+	startTensorboard = True
+elif len(sys.argv) > 2 and sys.argv[2].strip('-') in tbArgs:
+	startTensorboard = True
 
 # Carry out the specified command
 
@@ -155,18 +186,18 @@ elif command == 'run':
 	# Wait briefly for the server to start
 	time.sleep(2)
 	
-	# Use `docker port` to determine which host port was bound to container port 8888
-	result = subprocess.run(
-		[DOCKER_COMMAND, 'port', containerName, '8888'],
-		stdout=subprocess.PIPE,
-		stderr=subprocess.PIPE,
-		universal_newlines=True
-	)
-	hostAddress = result.stdout.strip()
-	
 	# Launch the user's web browser to display the Jupyter Notebook index page
-	openCommand = 'xdg-open' if IS_LINUX else 'open'
-	subprocess.Popen([openCommand, 'http://' + hostAddress])
+	Util.discoverPortAndOpen(containerName, 8888)
+	
+	# If we are running TensorBoard in addition to Jupyter, start it as well
+	if startTensorboard == True:
+		
+		# Start TensorBoard and wait briefly for it to start
+		tensorboard = subprocess.Popen([DOCKER_COMMAND, 'exec', containerName, 'tensorboard', '--logdir', '/tensorboard-log'])
+		time.sleep(2)
+		
+		# Open TensorBoard in the user's web browser as well
+		Util.discoverPortAndOpen(containerName, 6006)
 	
 	# Wait for the container to finish running
 	jupyter.communicate(None)
