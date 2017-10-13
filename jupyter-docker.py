@@ -94,6 +94,7 @@ RUN pip install \
 	numba \
 	bokeh \
 	sqlalchemy \
+	slidingwindow \
 	h5py \
 	vincent \
 	beautifulsoup4 \
